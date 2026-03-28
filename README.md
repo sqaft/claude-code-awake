@@ -101,11 +101,23 @@ Ctrl+O  # Verbose mode
 
 ### Caffeinate Parameters
 ```bash
-caffeinate -d -i -m
+caffeinate -d -i -m -w $PPID
 ```
 - `-d`: Prevents display sleep
 - `-i`: Prevents idle sleep
 - `-m`: Prevents disk sleep
+- `-w $PPID`: Binds to Claude Code's process - automatically stops when Claude Code exits
+
+### Safety Features
+The plugin includes multiple safety layers to prevent orphaned caffeinate processes:
+
+1. **Process Binding**: Caffeinate is bound to Claude Code's parent process using `-w $PPID`. If Claude Code crashes or exits unexpectedly, caffeinate automatically terminates.
+
+2. **Hook-based Cleanup**: Normal shutdown triggers the stop hook, ensuring clean termination.
+
+3. **Session-based PID Management**: Each session tracks its own caffeinate process, preventing conflicts between multiple Claude Code instances.
+
+4. **Stale PID Detection**: The start script automatically detects and cleans up stale PID files from previous sessions.
 
 ### Hook Timeouts
 - `UserPromptSubmit`: 5 seconds

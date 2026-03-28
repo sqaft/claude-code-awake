@@ -18,7 +18,8 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 # Start caffeinate in background with output redirected
-caffeinate -d -i -m >/dev/null 2>&1 &
+# -w $PPID: Claude Code process sonlanınca caffeinate de otomatik durur
+caffeinate -d -i -m -w $PPID >/dev/null 2>&1 &
 CAFFEINATE_PID=$!
 
 # Save PID to file
