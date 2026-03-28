@@ -1,6 +1,6 @@
 {
   "name": "claude-code-awake",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "Claude Code oturumları sırasında bilgisayarın uyku moduna geçmesini engeller",
   "author": {
     "name": "Yakup Yigit"
