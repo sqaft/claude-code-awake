@@ -24,29 +24,24 @@ Each session manages its own `caffeinate` process, so there are no issues with m
 
 ## Installation
 
-### 1. Download the Plugin
-
-```bash
-git clone https://github.com/yakupyigit/claude-code-awake.git
-cd claude-code-awake
-```
-
-### 2. Install to Claude Code
-
-```bash
-# Copy the plugin directory to Claude Code's plugin folder
-cp -r . ~/.claude/plugins/claude-code-awake/
-```
-
-### 3. Activate Hooks
+This plugin is available through the [Claude Code Marketplace](https://github.com/sqaft/claude-code-marketplace).
 
 Inside Claude Code:
+
+```
+/plugin marketplace add sqaft/claude-code-marketplace
+/plugin install claude-code-awake@sqaft-claude-marketplace
+```
+
+### Verify Installation
+
+Check that the hooks are loaded:
 
 ```
 /hooks
 ```
 
-Verify that the hooks are loaded. You should see these hooks:
+You should see these hooks:
 - `UserPromptSubmit`: start-caffeinate.sh
 - `Stop`: stop-caffeinate.sh
 - `SessionEnd`: cleanup-caffeinate.sh
