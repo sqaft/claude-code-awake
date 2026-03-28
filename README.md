@@ -101,9 +101,8 @@ Ctrl+O  # Verbose mode
 
 ### Caffeinate Parameters
 ```bash
-caffeinate -d -i -m -w $PPID
+caffeinate -i -m -w $PPID
 ```
-- `-d`: Prevents display sleep
 - `-i`: Prevents idle sleep
 - `-m`: Prevents disk sleep
 - `-w $PPID`: Binds to Claude Code's process - automatically stops when Claude Code exits

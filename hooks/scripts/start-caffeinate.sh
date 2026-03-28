@@ -19,7 +19,7 @@ fi
 
 # Start caffeinate in background with output redirected
 # -w $PPID: Claude Code process sonlanınca caffeinate de otomatik durur
-caffeinate -d -i -m -w $PPID >/dev/null 2>&1 &
+caffeinate -i -m -w $PPID >/dev/null 2>&1 &
 CAFFEINATE_PID=$!
 
 # Save PID to file
