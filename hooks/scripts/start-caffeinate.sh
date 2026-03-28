@@ -25,7 +25,9 @@ CAFFEINATE_PID=$!
 # Save PID to file
 echo "$CAFFEINATE_PID" > "$PID_FILE" 2>/dev/null
 
-# Show success notification
-osascript -e 'display notification "Caffeinate başlatıldı!" with title "Claude Code Awake"' >/dev/null 2>&1 &
+# Show success notification only in local development mode (no .claude in path)
+if [[ "$CLAUDE_PLUGIN_ROOT" != *"/.claude/"* ]]; then
+  osascript -e 'display notification "Caffeinate başlatıldı!" with title "Claude Code Awake"' >/dev/null 2>&1 &
+fi
 
 exit 0

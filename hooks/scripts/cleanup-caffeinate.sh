@@ -15,8 +15,10 @@ readonly PID_FILE="$PID_DIR/$SESSION_ID.pid"
 
   if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     kill "$PID" 2>/dev/null
-    # Show success notification
-    osascript -e 'display notification "Oturum sonlandı!" with title "Claude Code Awake"' >/dev/null 2>&1 &
+    # Show success notification only in local development mode (no .claude in path)
+    if [[ "$CLAUDE_PLUGIN_ROOT" != *"/.claude/"* ]]; then
+      osascript -e 'display notification "Oturum sonlandı!" with title "Claude Code Awake"' >/dev/null 2>&1 &
+    fi
   fi
 
   rm -f "$PID_FILE" 2>/dev/null

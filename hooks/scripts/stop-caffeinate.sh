@@ -16,8 +16,10 @@ PID=$(cat "$PID_FILE" 2>/dev/null)
 # Kill process if it's running
 if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
   kill "$PID" 2>/dev/null
-  # Show success notification
-  osascript -e 'display notification "Caffeinate durduruldu!" with title "Claude Code Awake"' >/dev/null 2>&1 &
+  # Show success notification only in local development mode (no .claude in path)
+  if [[ "$CLAUDE_PLUGIN_ROOT" != *"/.claude/"* ]]; then
+    osascript -e 'display notification "Caffeinate durduruldu!" with title "Claude Code Awake"' >/dev/null 2>&1 &
+  fi
 fi
 
 # Remove PID file
