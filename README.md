@@ -42,9 +42,9 @@ Check that the hooks are loaded:
 ```
 
 You should see these hooks:
-- `UserPromptSubmit`: start-caffeinate.sh
-- `Stop`: stop-caffeinate.sh
-- `SessionEnd`: cleanup-caffeinate.sh
+- `UserPromptSubmit`: caffeinate-start.sh
+- `Stop`: caffeinate-stop.sh
+- `SessionEnd`: caffeinate-cleanup.sh
 
 ## Usage
 
@@ -109,9 +109,11 @@ The plugin includes multiple safety layers to prevent orphaned caffeinate proces
 
 2. **Hook-based Cleanup**: Normal shutdown triggers the stop hook, ensuring clean termination.
 
-3. **Session-based PID Management**: Each session tracks its own caffeinate process, preventing conflicts between multiple Claude Code instances.
+3. **Session-based PID Management**: The session's `session_id` is read from the hook JSON payload on stdin (see `hooks/scripts/common.sh`), so each session uses its own PID file (`/tmp/claude-code-awake/<session_id>.pid`) and only ever starts, stops, or cleans up its own caffeinate process — running multiple Claude Code sessions in parallel no longer causes one session's `Stop` hook to kill another session's caffeinate.
 
-4. **Stale PID Detection**: The start script automatically detects and cleans up stale PID files from previous sessions.
+4. **Stale PID Detection**: The start script automatically detects and cleans up stale PID files from previous sessions. `SessionEnd` also sweeps any stale PID files left behind by other dead sessions.
+
+5. **PID Reuse Protection**: Before treating a PID as "our caffeinate" (to skip starting a new one, or to kill it), the scripts verify via `ps` that the process is actually named `caffeinate`, not just that the PID is alive. This avoids acting on an unrelated process if the original PID was recycled by the OS.
 
 ### Hook Timeouts
 - `UserPromptSubmit`: 5 seconds
