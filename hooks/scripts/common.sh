@@ -1,229 +1,321 @@
 #!/bin/bash
-# Shared helpers for claude-code-awake hook scripts.
-# Sourced by session-start.sh, caffeinate-start.sh, caffeinate-stop.sh,
-# caffeinate-cleanup.sh and always-awake.sh.
+# Shared state and decisions for the claude-code-awake scripts. Sourced by
+# hook.sh, watch.sh and always-awake.sh.
 #
-# Three independent kinds of caffeinate process are managed:
-#   - turn:    `caffeinate -i -m`, lives while the agent is responding
-#              ($PID_DIR/<session_id>.pid)
-#   - persist: `caffeinate -s`, lives for the whole session when remote
-#              control or /always-awake is on ($PID_DIR/persist-<claude>.pid)
-#   - rc:      `caffeinate -s`, bound to a `claude rc` server process and
-#              only stops when that server exits ($PID_DIR/rc-<server>.pid)
+# Each Claude Code process gets one sleep inhibitor, its "hold", for as long
+# as any of these is true:
+#   - the main agent is running a turn and is not waiting for the user
+#   - a subagent or teammate is running and is not waiting for the user
+#   - a background task (shell, monitor, workflow, ...) is running
+#   - the usage limit paused a turn that will continue on its own
+#   - Remote Control is on for the session, or /always-awake is enabled
+# A `claude rc` server gets a hold of its own for as long as it runs.
+#
+# State of one Claude Code process, in $STATE_ROOT/<claude pid>/:
+#   turn           the main agent is running a turn
+#   ratelimit      the usage limit paused a turn
+#   agents/<id>    subagent or teammate <id> is running
+#   waiting/<key>  "main" or agent <id> waits for the user to answer
+#   tasks          background tasks, one "<id> <type> <since>" per line
+#   rc, always     Remote Control is on / /always-awake is enabled
+#   hold.pid       the inhibitor (see platform.sh)
+#   watch.pid      the watcher (see watch.sh)
+# Flag files contain the epoch second they were written.
+#
+# Callers set CPID (the Claude Code PID) and SD (its state directory), and
+# PAYLOAD / PAYLOAD_HEAD when handling a hook payload.
 
-readonly PID_DIR="/tmp/claude-code-awake"
-readonly DEFAULT_SESSION_ID="global"
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+source "$SCRIPT_DIR/platform.sh"
 
-# Reads the Claude Code hook JSON payload from stdin and extracts
-# `.session_id`. Falls back to DEFAULT_SESSION_ID if stdin is empty,
-# unparsable, or the field is missing (keeps the plugin working even
-# if Claude Code's hook payload shape changes).
-read_session_id() {
-	local input raw_id sanitized
+STATE_ROOT="/tmp/claude-code-awake-${UID:-0}"
+NOW="$(date +%s)"
 
-	input="$(cat 2>/dev/null)"
+# A `claude rc` / `claude remote-control` server command line, and the
+# --remote-control flag of an interactive session.
+RC_SERVER_PATTERN='(^|[/\\ "])claude(\.exe)?"?[[:space:]]+(rc|remote-control)([[:space:]]|$)'
+RC_FLAG_PATTERN='[[:space:]]--remote-control([[:space:]=]|$)'
 
-	if [ -z "$input" ]; then
-		echo "$DEFAULT_SESSION_ID"
-		return
-	fi
-
-	if command -v jq >/dev/null 2>&1; then
-		raw_id="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)"
-	else
-		raw_id="$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
-	fi
-
-	if [ -z "$raw_id" ]; then
-		echo "$DEFAULT_SESSION_ID"
-		return
-	fi
-
-	# Sanitize: only allow safe filename characters to avoid path
-	# traversal or breaking out of PID_DIR via a crafted session_id.
-	sanitized="$(printf '%s' "$raw_id" | tr -cd 'A-Za-z0-9._-')"
-
-	if [ -z "$sanitized" ]; then
-		echo "$DEFAULT_SESSION_ID"
-		return
-	fi
-
-	echo "$sanitized"
+valid_id() {
+	[[ $1 =~ ^[A-Za-z0-9._-]+$ ]]
 }
 
-pid_file_for() {
-	echo "$PID_DIR/$1.pid"
+# payload_field <name>: a string field from the start of the payload, where
+# the common fields, hook_event_name, tool_name, error, reason and source are.
+payload_field() {
+	local re="\"$1\":\"([^\"]*)\""
+
+	[[ $PAYLOAD_HEAD =~ $re ]] && printf '%s' "${BASH_REMATCH[1]}"
 }
 
-persist_pid_file_for() {
-	echo "$PID_DIR/persist-$1.pid"
+# payload_agent_id: the subagent or teammate the event belongs to, empty
+# for the main agent. Read only among the common fields, which come before
+# hook_event_name, so a key inside tool_input cannot match.
+payload_agent_id() {
+	local head="${PAYLOAD_HEAD%%\"hook_event_name\"*}"
+	local re='"agent_id":"([A-Za-z0-9._-]+)"'
+
+	[[ $head =~ $re ]] && printf '%s' "${BASH_REMATCH[1]}"
 }
 
-rc_pid_file_for() {
-	echo "$PID_DIR/rc-$1.pid"
-}
+# payload_tasks: "<id> <type>" for each running or pending entry of the
+# background_tasks field of a Stop or SubagentStop payload.
+payload_tasks() {
+	local rest="${PAYLOAD#*\"background_tasks\":\[}"
+	local re='\{"id":"([^"]*)","type":"([^"]*)","status":"(running|pending)"'
 
-always_flag_for() {
-	echo "$PID_DIR/always-$1.flag"
-}
+	[ "$rest" != "$PAYLOAD" ] || return 1
+	rest="${rest%%\"session_crons\":*}"
 
-is_alive() {
-	[ -n "$1" ] && kill -0 "$1" 2>/dev/null
-}
-
-proc_args() {
-	ps -p "$1" -o args= 2>/dev/null
-}
-
-proc_ppid() {
-	ps -p "$1" -o ppid= 2>/dev/null | tr -d ' '
-}
-
-# Returns success if $1 is a live PID AND its command name looks like
-# caffeinate. Guards against PID reuse causing us to treat an unrelated
-# process as "already running" or, worse, kill it.
-is_our_caffeinate() {
-	local pid="$1"
-
-	if ! is_alive "$pid"; then
-		return 1
-	fi
-
-	ps -p "$pid" -o comm= 2>/dev/null | grep -q caffeinate
+	while [[ $rest =~ $re ]]; do
+		printf '%s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+		rest="${rest#*"${BASH_REMATCH[0]}"}"
+	done
 }
 
 # Prints the PID of the Claude Code process this script belongs to.
-# Prefers $CLAUDE_PID (set by Claude Code for hooks), then walks up the
-# process tree looking for a `claude` executable, then falls back to $PPID.
+# Prefers $CLAUDE_PID (set by Claude Code for hooks and commands; a Windows
+# PID on Windows), then walks up the process tree looking for a `claude`
+# executable, then falls back to $PPID.
 claude_pid() {
-	local pid comm
+	local pid="$CLAUDE_PID" name
 
-	if is_alive "$CLAUDE_PID"; then
-		echo "$CLAUDE_PID"
-		return
-	fi
+	case "$pid" in
+		'' | *[!0-9]*) ;;
+		*)
+			printf '%s' "$pid"
+			return
+			;;
+	esac
 
 	pid="$PPID"
 	for _ in 1 2 3 4 5 6; do
-		if [ -z "$pid" ] || [ "$pid" -le 1 ] 2>/dev/null; then
-			break
-		fi
-		comm="$(ps -p "$pid" -o comm= 2>/dev/null)"
-		if [ "${comm##*/}" = "claude" ]; then
-			echo "$pid"
+		case "$pid" in '' | 0 | 1 | *[!0-9]*) break ;; esac
+		name="$(proc_name "$pid")"
+		if [ "$name" = claude ] || [ "$name" = claude.exe ]; then
+			printf '%s' "$pid"
 			return
 		fi
 		pid="$(proc_ppid "$pid")"
 	done
 
-	echo "$PPID"
+	printf '%s' "$PPID"
 }
 
-# Prints the PID of the `claude rc` / `claude remote-control` server that
-# spawned this session, if any. `claude rc` starts each session as a child
-# process, so the server is the parent of the session's claude process.
-rc_server_pid() {
-	local parent args
-	local pattern='(^|/)claude[[:space:]]+(rc|remote-control)([[:space:]]|$)'
+state_dir() {
+	printf '%s/%s' "$STATE_ROOT" "$1"
+}
 
-	parent="$(proc_ppid "$1")"
-	if ! is_alive "$parent"; then
-		return 1
-	fi
+init_state() {
+	mkdir -p "$SD/agents" "$SD/waiting" 2>/dev/null
+}
 
-	args="$(proc_args "$parent")"
-	if [[ "$args" =~ $pattern ]]; then
-		echo "$parent"
+set_flag() {
+	printf '%s\n' "$NOW" >"$1"
+}
+
+# flag_time <file>: the epoch second stored in a flag file, 0 if unreadable.
+flag_time() {
+	local t=0
+
+	read -r t 2>/dev/null <"$1"
+	case "$t" in '' | *[!0-9]*) t=0 ;; esac
+	printf '%s' "$t"
+}
+
+# lock_dir <dir> / unlock_dir <dir>: serialize state changes between hooks
+# and the watcher. A lock left behind by a killed process is taken over
+# after 3 seconds.
+lock_dir() {
+	local tries=0
+
+	until mkdir "$1/.lock" 2>/dev/null; do
+		tries=$((tries + 1))
+		[ "$tries" -eq 30 ] && rm -rf "$1/.lock"
+		[ "$tries" -ge 50 ] && return 1
+		sleep 0.1
+	done
+}
+
+unlock_dir() {
+	rmdir "$1/.lock" 2>/dev/null
+}
+
+work_needed() {
+	local agent
+
+	if [ -e "$SD/rc" ] || [ -e "$SD/always" ] || [ -e "$SD/ratelimit" ]; then
 		return 0
 	fi
 
-	return 1
-}
-
-# Returns success if the session was started with --remote-control, or if
-# remote control was turned on inside the session (/remote-control), which
-# Claude Code signals to hooks via CLAUDE_CODE_BRIDGE_SESSION_ID.
-is_remote_control_session() {
-	local pattern='[[:space:]]--remote-control([[:space:]=]|$)'
-
-	if [ -n "$CLAUDE_CODE_BRIDGE_SESSION_ID" ]; then
+	if [ -e "$SD/turn" ] && [ ! -e "$SD/waiting/main" ]; then
 		return 0
 	fi
 
-	[[ "$(proc_args "$1")" =~ $pattern ]]
+	for agent in "$SD"/agents/*; do
+		[ -e "$agent" ] || continue
+		[ -e "$SD/waiting/${agent##*/}" ] || return 0
+	done
+
+	[ -s "$SD/tasks" ]
 }
 
-on_ac_power() {
-	pmset -g batt 2>/dev/null | grep -q "AC Power"
+# Starts or stops the hold so that it matches the state.
+reconcile() {
+	if work_needed; then
+		inhibitor_alive "$SD/hold.pid" && return 0
+		stop_inhibitor "$SD/hold.pid"
+		start_inhibitor "$SD/hold.pid" "$CPID" && notify "Uyku engellendi."
+	elif stop_inhibitor "$SD/hold.pid"; then
+		notify "Uyku engeli kaldırıldı."
+	fi
 }
 
-# ensure_caffeinate <pid_file> <watch_pid> <caffeinate flags...>
-# Starts caffeinate bound to <watch_pid> (-w) unless the one recorded in
-# <pid_file> is still running. Returns 1 if caffeinate is unavailable.
-ensure_caffeinate() {
-	local pid_file="$1" watch_pid="$2" pid
-	shift 2
+watcher_alive() {
+	local pid
 
-	if ! command -v caffeinate >/dev/null 2>&1; then
-		return 1
-	fi
+	read -r pid 2>/dev/null <"$SD/watch.pid" || return 1
+	kill -0 "$pid" 2>/dev/null || return 1
 
-	mkdir -p "$PID_DIR" 2>/dev/null
-
-	if [ -f "$pid_file" ]; then
-		pid=$(cat "$pid_file" 2>/dev/null)
-		if is_our_caffeinate "$pid"; then
-			return 0
-		fi
-		rm -f "$pid_file" 2>/dev/null
-	fi
-
-	# -w: caffeinate exits on its own when the watched process exits
-	caffeinate "$@" -w "$watch_pid" >/dev/null 2>&1 &
-	echo "$!" > "$pid_file" 2>/dev/null
-
-	return 0
+	case "$PLATFORM" in
+		macos | linux | wsl) [[ "$(proc_cmdline "$pid")" == *watch.sh* ]] ;;
+	esac
 }
 
-# kill_caffeinate <pid_file>
-# Stops the caffeinate recorded in <pid_file> (if it is really ours) and
-# removes the file. Returns success only if a process was stopped.
-kill_caffeinate() {
-	local pid_file="$1" pid killed=1
+ensure_watcher() {
+	watcher_alive && return 0
 
-	if [ ! -f "$pid_file" ]; then
-		return 1
+	bash "$SCRIPT_DIR/watch.sh" "$CPID" </dev/null >/dev/null 2>&1 &
+	printf '%s\n' "$!" >"$SD/watch.pid"
+}
+
+# record_tasks [stopping agent id]: replaces the task list with the
+# background_tasks of a Stop or SubagentStop payload. Subagents are kept
+# under agents/ instead, and teammates are followed through their own hooks.
+# Without background_tasks in the payload the list ends up empty.
+record_tasks() {
+	local exclude="$1" list id type
+
+	list="$(payload_tasks)"
+	: >"$SD/tasks.new"
+
+	while read -r id type; do
+		valid_id "$id" && [ "$id" != "$exclude" ] || continue
+		case "$type" in
+			subagent) [ -e "$SD/agents/$id" ] || set_flag "$SD/agents/$id" ;;
+			teammate) ;;
+			*) printf '%s %s %s\n' "$id" "${type// /_}" "$NOW" >>"$SD/tasks.new" ;;
+		esac
+	done <<EOF
+$list
+EOF
+
+	mv -f "$SD/tasks.new" "$SD/tasks"
+}
+
+# A background Bash command appears in its PostToolUse right away, so it is
+# followed even when the turn ends without a Stop (Esc).
+record_background_launch() {
+	local re='"backgroundTaskId":"([A-Za-z0-9._-]+)"' id
+
+	[ "$(payload_field tool_name)" = Bash ] || return 0
+	[[ $PAYLOAD =~ $re ]] || return 0
+	id="${BASH_REMATCH[1]}"
+
+	grep -q "^$id " "$SD/tasks" 2>/dev/null && return 0
+	printf '%s shell %s\n' "$id" "$NOW" >>"$SD/tasks"
+}
+
+# Remote Control turned on inside the session (/remote-control) shows up in
+# the environment of the hooks that run after it.
+mark_remote_control_from_env() {
+	if [ -n "$CLAUDE_CODE_BRIDGE_SESSION_ID" ] && [ ! -e "$SD/rc" ]; then
+		set_flag "$SD/rc"
+	fi
+}
+
+# Run at SessionStart. Marks sessions started with --remote-control, and
+# gives the `claude rc` server that spawned this session a hold of its own
+# for as long as the server runs. Slow on Windows (PowerShell), so it is run
+# in the background.
+detect_remote_control() {
+	local info rest parent_pid own parent
+
+	if [ "$PLATFORM" = windows ]; then
+		info="$(windows_proc_info "$CPID")"
+		parent_pid="${info%%$'\t'*}"
+		rest="${info#*$'\t'}"
+		own="${rest%%$'\t'*}"
+		parent="${rest#*$'\t'}"
+	else
+		parent_pid="$(proc_ppid "$CPID")"
+		own="$(proc_cmdline "$CPID")"
+		parent="$(proc_cmdline "$parent_pid")"
 	fi
 
-	pid=$(cat "$pid_file" 2>/dev/null)
-	if is_our_caffeinate "$pid"; then
+	if [[ $own =~ $RC_FLAG_PATTERN ]] || [ -n "$CLAUDE_CODE_BRIDGE_SESSION_ID" ]; then
+		set_flag "$SD/rc"
+	fi
+
+	if [[ $parent =~ $RC_SERVER_PATTERN ]]; then
+		ensure_rc_server_hold "$parent_pid"
+	elif [ "$CLAUDE_CODE_ENVIRONMENT_KIND" = bridge ]; then
+		# Spawned by a Remote Control server that could not be identified:
+		# keep at least this session awake.
+		set_flag "$SD/rc"
+	fi
+}
+
+ensure_rc_server_hold() {
+	local pid_file="$STATE_ROOT/rc-$1.pid"
+
+	case "$1" in '' | *[!0-9]*) return 1 ;; esac
+	lock_dir "$STATE_ROOT" || return 1
+
+	if ! inhibitor_alive "$pid_file"; then
+		stop_inhibitor "$pid_file"
+		start_inhibitor "$pid_file" "$1" &&
+			notify "Remote Control sunucusu için uyku engellendi."
+	fi
+
+	unlock_dir "$STATE_ROOT"
+}
+
+# end_session_state [keep-watcher]: stops the hold and the watcher of this
+# Claude Code process and removes its state. A `claude rc` server hold is
+# left alone: it stops by itself when the server exits.
+end_session_state() {
+	local pid
+
+	stop_inhibitor "$SD/hold.pid" && notify "Uyku engeli kaldırıldı."
+
+	if [ "$1" != keep-watcher ] && watcher_alive; then
+		read -r pid <"$SD/watch.pid"
 		kill "$pid" 2>/dev/null
-		killed=0
 	fi
 
-	rm -f "$pid_file" 2>/dev/null
-
-	return $killed
+	rm -rf "$SD"
 }
 
-# Keeps the session-wide `caffeinate -s` running if remote control or
-# /always-awake is active for this session.
-ensure_persist_if_needed() {
-	local cpid="$1"
+# Removes the state of Claude Code processes that are gone, and the records
+# of `claude rc` server holds that have stopped.
+sweep_stale_state() {
+	local dir pid pid_file
 
-	if is_remote_control_session "$cpid" || [ -f "$(always_flag_for "$cpid")" ]; then
-		ensure_caffeinate "$(persist_pid_file_for "$cpid")" "$cpid" -s
-	fi
-}
+	for dir in "$STATE_ROOT"/*/; do
+		dir="${dir%/}"
+		pid="${dir##*/}"
+		case "$pid" in '' | *[!0-9]*) continue ;; esac
+		[ "$pid" = "$CPID" ] && continue
+		native_alive "$pid" && continue
+		stop_inhibitor "$dir/hold.pid"
+		rm -rf "$dir"
+	done
 
-# Shows a macOS notification, but only in local development (when the
-# plugin is not running from an installed ~/.claude/... location). This
-# is intentional: end users installing via the marketplace should not
-# see these notifications, only the plugin author while testing.
-notify() {
-	local message="$1"
-
-	if [[ "$CLAUDE_PLUGIN_ROOT" != *"/.claude/"* ]]; then
-		osascript -e "display notification \"$message\" with title \"Claude Code Awake\"" >/dev/null 2>&1 &
-	fi
+	lock_dir "$STATE_ROOT" || return
+	for pid_file in "$STATE_ROOT"/rc-*.pid; do
+		[ -e "$pid_file" ] || continue
+		inhibitor_alive "$pid_file" || stop_inhibitor "$pid_file"
+	done
+	unlock_dir "$STATE_ROOT"
 }

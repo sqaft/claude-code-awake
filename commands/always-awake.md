@@ -1,5 +1,5 @@
 ---
-description: Keep this Mac awake for the rest of the session (enable, disable, or toggle)
+description: Keep this computer awake for the rest of the session (enable, disable, or toggle)
 argument-hint: "[enable|disable]"
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/hooks/scripts/always-awake.sh:*)
 disable-model-invocation: true

@@ -6,7 +6,7 @@
 				"hooks": [
 					{
 						"type": "command",
-						"command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-start.sh",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" SessionStart; exit 0",
 						"timeout": 5
 					}
 				]
@@ -18,7 +18,115 @@
 				"hooks": [
 					{
 						"type": "command",
-						"command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/caffeinate-start.sh",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" UserPromptSubmit; exit 0",
+						"timeout": 5
+					}
+				]
+			}
+		],
+		"PermissionRequest": [
+			{
+				"matcher": "",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" PermissionRequest; exit 0",
+						"timeout": 5
+					}
+				]
+			}
+		],
+		"Elicitation": [
+			{
+				"matcher": "",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" Elicitation; exit 0",
+						"timeout": 5
+					}
+				]
+			}
+		],
+		"PostToolUse": [
+			{
+				"matcher": "",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" PostToolUse; exit 0",
+						"timeout": 5
+					}
+				]
+			}
+		],
+		"PostToolUseFailure": [
+			{
+				"matcher": "",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" PostToolUseFailure; exit 0",
+						"timeout": 5
+					}
+				]
+			}
+		],
+		"PermissionDenied": [
+			{
+				"matcher": "",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" PermissionDenied; exit 0",
+						"timeout": 5
+					}
+				]
+			}
+		],
+		"ElicitationResult": [
+			{
+				"matcher": "",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" ElicitationResult; exit 0",
+						"timeout": 5
+					}
+				]
+			}
+		],
+		"SubagentStart": [
+			{
+				"matcher": "",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" SubagentStart; exit 0",
+						"timeout": 5
+					}
+				]
+			}
+		],
+		"SubagentStop": [
+			{
+				"matcher": "",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" SubagentStop; exit 0",
+						"timeout": 5
+					}
+				]
+			}
+		],
+		"TeammateIdle": [
+			{
+				"matcher": "",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" TeammateIdle; exit 0",
 						"timeout": 5
 					}
 				]
@@ -30,7 +138,19 @@
 				"hooks": [
 					{
 						"type": "command",
-						"command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/caffeinate-stop.sh",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" Stop; exit 0",
+						"timeout": 5
+					}
+				]
+			}
+		],
+		"StopFailure": [
+			{
+				"matcher": "",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" StopFailure; exit 0",
 						"timeout": 5
 					}
 				]
@@ -42,7 +162,7 @@
 				"hooks": [
 					{
 						"type": "command",
-						"command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/caffeinate-cleanup.sh",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hook.sh\" SessionEnd; exit 0",
 						"timeout": 2
 					}
 				]

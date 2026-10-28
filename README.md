@@ -1,40 +1,77 @@
 # Claude Code Awake
 
-A plugin that prevents your computer from sleeping during Claude Code sessions, including Remote Control sessions that wait for your phone.
+A plugin that keeps your computer awake while Claude Code agents are working, and for as long as Remote Control is on. Works on macOS, Linux, Windows and WSL.
 
 ## Problem
 
-During long-running operations with Claude Code (code analysis, running tests, etc.), when the screen turns off, the computer goes to sleep and Claude Code stops working. This plugin solves this problem using macOS's `caffeinate` command.
+When the screen turns off, the computer goes to sleep and Claude Code stops working. Much of that work goes on after Claude has replied: background subagents, agent teammates, workflows, background shell commands and monitors keep running while the session looks idle.
 
-The same happens with [Remote Control](https://code.claude.com/docs/en/remote-control): a session that is idle and waiting for a message from your phone does nothing, so the Mac goes to sleep and the connection drops. The plugin keeps the Mac awake for the whole life of such sessions.
+Remote Control has the same problem: a session that waits for a message from your phone does nothing, so the computer goes to sleep and the connection drops.
 
-## How It Works
+## When the Computer Stays Awake
 
-The plugin integrates with Claude Code's hook system:
+| Situation | Awake |
+|---|---|
+| The main agent is working on your message | Yes |
+| Subagents, agent teammates, workflows, background shell commands, monitors or other background tasks are running, even after Claude has replied | Yes |
+| An agent waits for your answer (permission prompt, question, plan approval, MCP input) and nothing else is running | No |
+| An agent waits for your answer while another agent or background task keeps working | Yes |
+| The usage limit paused a turn that continues by itself when the limit resets | Yes |
+| Claude is idle, waiting for your next message | No |
+| Remote Control is on | Always |
+| `/always-awake` is enabled | Until the session ends |
 
-1. **When a message is sent**: The `caffeinate` command starts and keeps the computer awake
-2. **When the agent finishes responding**: `caffeinate` is stopped
-3. **When the session ends**: Cleanup is performed and `caffeinate` is terminated
+The computer is kept awake on battery and on AC power alike. See [Platform Support](#platform-support) for what each platform can and cannot prevent.
 
-Each session manages its own `caffeinate` process, so there are no issues with multiple sessions.
+Each Claude Code process is handled on its own, so several sessions can run side by side.
 
-On top of that, Remote Control sessions and sessions where you ran `/always-awake` also keep the Mac awake **between** messages (see below).
+## Compared with Claude Code's Own Sleep Prevention
+
+Claude Code prevents some sleep by itself: on macOS, an interactive session runs `caffeinate -i` while it is busy and releases it 30 seconds after a prompt starts waiting for an answer, even if other agents are still working. Sessions spawned by `claude rc` are kept awake only while they work, at most one hour at a time. This behavior is undocumented; the table reflects Claude Code 2.1.312. The plugin runs alongside it and does not turn it off.
+
+| Situation | Claude Code | This plugin |
+|---|---|---|
+| **Interactive session** | | |
+| The main agent is working | Yes | Yes |
+| An agent waits for your answer and nothing else is running | No | No |
+| The main agent has replied, background subagents, teammates or workflows are running | Yes | Yes |
+| An agent waits for your answer while another agent or background task keeps working | No | Yes |
+| Only background shell commands are running | No | Yes |
+| A Monitor or an MCP background task is running | No | Yes |
+| The usage limit paused a turn that continues by itself | No | Yes |
+| Between the runs of `/loop`, a cron or a scheduled wakeup | No | No (use `/always-awake`) |
+| Idle, waiting for your next message | No | No |
+| `/always-awake` is enabled | — | Yes |
+| **Remote Control** | | |
+| A `--remote-control` or `/remote-control` session waits for a message | No | Yes |
+| `/remote-control` is on, no message sent since | No | No, until the next hook |
+| A `claude rc` server runs with no session open | No | Yes, once the server has started a session |
+| A `claude rc` session is working | Yes, at most one hour at a time | Yes |
+| **`claude -p` and the Agent SDK** | | |
+| The agent is working | No | Yes |
+| The turn has ended, background tasks are running | No | Yes |
+| **Power and platform** | | |
+| On battery | Yes | Yes |
+| Lid closed, power adapter connected (macOS) | No | Yes |
+| Lid closed, on battery (macOS) | No | No |
+| Linux | No | Yes |
+| Windows and WSL | No | Yes |
 
 ## Remote Control
 
-The plugin detects Remote Control automatically, however you start it:
+The plugin detects [Remote Control](https://code.claude.com/docs/en/remote-control) automatically, however you start it, and keeps the computer awake for as long as it is on:
 
 | How you start it | What happens |
 |---|---|
-| `claude rc` (`claude remote-control`) | Starts one `caffeinate` bound to the `claude rc` server. It stays on as long as the server runs, even when no session is open. |
-| `claude --remote-control` | Stays awake for the whole session, from the moment it starts. |
-| `/remote-control` inside a session | Stays awake from your **next message** on. Slash commands don't trigger hooks, so run `/always-awake enable` as well if you won't send a message first. |
+| `claude rc` (`claude remote-control`) | Keeps the computer awake for as long as the server runs, even when no session is open. |
+| `claude --remote-control` | Keeps the computer awake for the whole session, from the moment it starts. |
+| `/remote-control` inside a session | Keeps the computer awake from the next hook on, which is usually your next message. Slash commands don't trigger hooks, so run `/always-awake enable` as well if you won't send a message first. |
 
-These use `caffeinate -s`, which only works **while the power adapter is connected**. On battery nothing is held, so a Mac you carry around still sleeps normally.
+`claude rc` is detected when the server starts its first session. By default the server creates one at startup; with `--no-create-session-in-dir` nothing is held until the first session starts.
 
 ## `/always-awake`
 
-Keeps the Mac awake for the current session only, until the session ends or you turn it off.
+Keeps the computer awake for the current session only, until the session ends or you turn it off.
 
 ```
 /always-awake          # toggle
@@ -42,20 +79,16 @@ Keeps the Mac awake for the current session only, until the session ends or you 
 /always-awake disable
 ```
 
-If the Mac is on battery when you enable it, the command tells you it has no effect until the adapter is connected.
-
-## Lid Behavior
-
-- **Power adapter connected**: `caffeinate -s` also keeps the Mac awake with the lid closed (display off).
-- **On battery**: closing the lid always sleeps the Mac. This is intentional so a laptop in a bag never stays awake.
-
-The plugin does not use `pmset disablesleep`: it needs `sudo`, and if cleanup ever failed the Mac would never sleep again.
-
 ## Platform Support
 
-- ✅ macOS (caffeinate)
-- ❌ Linux (could be added in the future with `systemd-inhibit`)
-- ❌ Windows (could be added in the future with `powercfg`)
+| Platform | How | Notes |
+|---|---|---|
+| macOS | `caffeinate -i -m -s` | `-i` prevents idle sleep on battery and AC. `-s` prevents system sleep, which macOS honors only on AC power; with the power adapter connected this also keeps the Mac awake with the lid closed. On battery, closing the lid always sleeps the Mac. |
+| Linux | `systemd-inhibit --what=sleep:idle:handle-lid-switch` | Blocks suspend, idle and the lid switch. Needs systemd-logind and permission to take block inhibitors (granted to active local sessions by default). Without `systemd-inhibit` nothing is held. |
+| Windows | PowerShell calling `SetThreadExecutionState(ES_SYSTEM_REQUIRED)` | Prevents sleep on battery and AC. Closing the lid still follows the power plan's lid action. The hooks run in Git Bash, which Claude Code uses on Windows; without Git Bash the plugin does nothing. |
+| WSL | The Windows method through `powershell.exe` | Keeps the Windows host awake. Needs Windows interop (`powershell.exe` on the `PATH`). |
+
+The plugin does not use `pmset disablesleep` or change power plans: these need administrator rights, and if cleanup ever failed the computer would never sleep again.
 
 ## Installation
 
@@ -76,146 +109,135 @@ Check that the hooks are loaded:
 /hooks
 ```
 
-You should see these hooks:
-- `SessionStart`: session-start.sh
-- `UserPromptSubmit`: caffeinate-start.sh
-- `Stop`: caffeinate-stop.sh
-- `SessionEnd`: caffeinate-cleanup.sh
-
-and the `/always-awake` command.
+You should see `hook.sh` on these events: `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `Elicitation`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`, `ElicitationResult`, `SubagentStart`, `SubagentStop`, `TeammateIdle`, `Stop`, `StopFailure` and `SessionEnd`, and the `/always-awake` command.
 
 ## Usage
 
-The plugin works automatically, no configuration needed. When you send a message, the computer will automatically stay awake, and Remote Control sessions stay awake while they wait. Use `/always-awake` to opt a single session in manually.
+The plugin works automatically, no configuration needed. Use `/always-awake` to keep a single session awake while it is idle.
 
-### Control Commands
+## How It Works
+
+Every Claude Code process gets one sleep inhibitor, its *hold*, while it has work running, while Remote Control is on, or while `/always-awake` is enabled. A `claude rc` server gets a hold of its own.
+
+### Hook Events
+
+All hooks run `hooks/scripts/hook.sh`, which records what the event says and then starts or stops the hold to match:
+
+| Event | Records |
+|---|---|
+| `UserPromptSubmit` | The main agent started a turn |
+| `PermissionRequest`, `Elicitation` | The main agent or a subagent waits for the user |
+| `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`, `ElicitationResult` | The agent got its answer and is working; a background Bash command started |
+| `SubagentStart`, `SubagentStop` | A subagent or teammate started or finished |
+| `TeammateIdle` | A teammate waits for a message |
+| `Stop` | The turn ended; the background tasks still running, from the `background_tasks` field of the payload |
+| `StopFailure` | The turn ended with an error; a `rate_limit` error means it continues by itself |
+| `SessionStart` | Starts the watcher; detects `--remote-control` and `claude rc` |
+| `SessionEnd` | Releases everything (except after `/clear`, when the process goes on) |
+
+Remote Control turned on with `/remote-control` is detected from `CLAUDE_CODE_BRIDGE_SESSION_ID` in the environment of every hook.
+
+### Watcher
+
+Some changes reach no hook: a turn interrupted with Esc or ended by rejecting a prompt has no `Stop`, and a tool approved after a prompt reports `PostToolUse` only when it finishes. A watcher (`hooks/scripts/watch.sh`) runs next to each Claude Code process and, every 15 seconds, reads Claude Code's session status file (`~/.claude/sessions/<pid>.json`, interactive sessions only) to correct the state, repairs the hold if it died, and removes everything once Claude Code exits.
+
+### State
+
+State lives in `/tmp/claude-code-awake-<uid>/` (Git Bash's `/tmp` on Windows):
+
+- `<claude pid>/`: the state of one Claude Code process (`turn`, `agents/`, `waiting/`, `tasks`, `rc`, `always`), its hold (`hold.pid`) and its watcher (`watch.pid`)
+- `rc-<server pid>.pid`: the hold of a `claude rc` server
+
+### Safety Features
+
+1. **Process binding**: every hold is bound to the Claude Code process (or the `claude rc` server) and ends by itself when that process exits, even if Claude Code crashes.
+2. **No leftover helpers**: the Linux and Windows holds run only while their run file exists, so stopping one never leaves a helper process behind.
+3. **PID reuse protection**: before treating a PID as one of its holds, the plugin checks the process (and its run file), not just that the PID is alive.
+4. **Stale state cleanup**: the watcher removes a process's state when it exits, and `SessionStart` sweeps state left by processes that are gone.
+5. **Never blocks Claude Code**: hook commands end with `exit 0`, so a failing hook can't block a prompt or deny a permission.
+
+### Hook Timeouts
+
+- `SessionEnd`: 2 seconds
+- All other events: 5 seconds (process lookups that are slow on Windows run in the background)
+
+## Troubleshooting
+
+### See what keeps the computer awake
 
 ```bash
-# Show running caffeinate processes
-ps aux | grep caffeinate
+# macOS
+pmset -g assertions | grep caffeinate
 
-# Check PID files
-ls -la /tmp/claude-code-awake/
+# Linux
+systemd-inhibit --list
 
-# View hook outputs (inside Claude Code)
-Ctrl+O  # Verbose mode
+# Windows (administrator PowerShell)
+powercfg /requests
+```
+
+### Inspect the plugin's state
+
+```bash
+ls -R /tmp/claude-code-awake-$UID/
+```
+
+### Hooks not working
+
+```
+/hooks          # check that the hooks are loaded
+Ctrl+O          # verbose mode shows hook output
+```
+
+### Stop everything manually
+
+```bash
+# macOS
+pkill -f "caffeinate -i -m -s"
+
+# all platforms: removing the state also stops the Linux and Windows holds
+rm -rf /tmp/claude-code-awake-$UID/
 ```
 
 ## Test Scenarios
 
-### 1. Normal Flow
+### 1. Working and idle
 ```
-1. Send a message in Claude Code
-2. Check the process with `ps aux | grep caffeinate`
-3. Let the agent finish responding
-4. Verify the process has stopped
+1. Send a message and check that a hold exists while Claude works (see Troubleshooting)
+2. Let Claude finish and check that the hold is gone
 ```
 
-### 2. Multiple Sessions
+### 2. Background work
 ```
-1. Open Claude Code in two terminals
-2. Send messages in both
-3. Verify each session has its own caffeinate process
-4. Close one session, see that the other is unaffected
-```
-
-### 3. Rapid Messages
-```
-1. Send several messages in quick succession
-2. Verify only one caffeinate process is running
+1. Ask Claude to start a background subagent or a background shell command that runs for a few minutes
+2. After Claude replies, check that the hold is still there
+3. When the background work finishes, check that the hold is gone
 ```
 
-### 4. Remote Control
+### 3. Waiting for the user
 ```
-1. Connect the power adapter
-2. Run `claude rc`, `claude --remote-control`, or `/remote-control` and send a message
-3. Wait until the agent has finished responding
-4. Verify with `pmset -g assertions` that caffeinate still holds PreventSystemSleep
-5. Close the lid, send a message from your phone, and check that it is answered
-6. Exit; verify the caffeinate process is gone
+1. In manual permission mode, ask Claude to run a command that needs approval
+2. While the prompt is shown, check that the hold is gone
+3. Approve it and check that the hold is back within about 15 seconds
 ```
 
-### 5. /always-awake
+### 4. Interrupt
 ```
-1. Run `/always-awake` in a plain session, send a message and let it finish
-2. Verify caffeinate is still running
-3. Run `/always-awake` again (or `disable`) and verify it stops
-```
-
-## Technical Details
-
-### PID Management
-Three independent kinds of `caffeinate` process, each with its own file in `/tmp/claude-code-awake/`:
-
-| Kind | File | Started by | Stopped by |
-|---|---|---|---|
-| Turn | `<session_id>.pid` | `UserPromptSubmit` | `Stop`, `SessionEnd` |
-| Session | `persist-<claude_pid>.pid` | Remote Control detected, `/always-awake` | `SessionEnd`, `/always-awake disable` |
-| `claude rc` server | `rc-<server_pid>.pid` | `SessionStart` of a session spawned by `claude rc` | Only when the server exits |
-
-- Hooks receive `session_id` from stdin
-- Only the relevant session's process is terminated
-- `/always-awake` state is a flag file, `always-<claude_pid>.flag`, so it only applies to that session
-
-### Remote Control Detection
-- `claude rc`: the session's parent process is `claude rc` / `claude remote-control`
-- `claude --remote-control`: the session's command line contains `--remote-control`
-- `/remote-control`: Claude Code sets `CLAUDE_CODE_BRIDGE_SESSION_ID` in the environment of later hooks
-
-### Caffeinate Parameters
-```bash
-caffeinate -i -m -w <claude pid>   # per turn
-caffeinate -s -w <claude pid>      # Remote Control / /always-awake
-caffeinate -s -w <claude rc pid>   # claude rc server
-```
-- `-i`: Prevents idle sleep
-- `-m`: Prevents disk sleep
-- `-s`: Prevents system sleep, only while on AC power (also covers a closed lid)
-- `-w <pid>`: Binds to a process - caffeinate automatically stops when it exits
-
-### Safety Features
-The plugin includes multiple safety layers to prevent orphaned caffeinate processes:
-
-1. **Process Binding**: Caffeinate is bound to the Claude Code process (`$CLAUDE_PID`, or the nearest `claude` ancestor) using `-w`. If Claude Code crashes or exits unexpectedly, caffeinate automatically terminates.
-
-2. **Hook-based Cleanup**: Normal shutdown triggers the stop hook, ensuring clean termination.
-
-3. **Session-based PID Management**: The session's `session_id` is read from the hook JSON payload on stdin (see `hooks/scripts/common.sh`), so each session uses its own PID file (`/tmp/claude-code-awake/<session_id>.pid`) and only ever starts, stops, or cleans up its own caffeinate process — running multiple Claude Code sessions in parallel no longer causes one session's `Stop` hook to kill another session's caffeinate.
-
-4. **Stale PID Detection**: The start script automatically detects and cleans up stale PID files from previous sessions. `SessionEnd` also sweeps any stale PID files left behind by other dead sessions.
-
-5. **PID Reuse Protection**: Before treating a PID as "our caffeinate" (to skip starting a new one, or to kill it), the scripts verify via `ps` that the process is actually named `caffeinate`, not just that the PID is alive. This avoids acting on an unrelated process if the original PID was recycled by the OS.
-
-### Hook Timeouts
-- `SessionStart`: 5 seconds
-- `UserPromptSubmit`: 5 seconds
-- `Stop`: 5 seconds
-- `SessionEnd`: 2 seconds (runs in background)
-
-## Troubleshooting
-
-### Hooks not working
-```bash
-# Check if hooks are loaded
-/hooks
-
-# See detailed output with verbose mode
-Ctrl+O
+1. Ask Claude to run a long command and press Esc while it runs
+2. Check that the hold is gone within about 15 seconds
 ```
 
-### Caffeinate won't stop
-```bash
-# Stop manually
-pkill caffeinate
-
-# Clean up PID files
-rm -rf /tmp/claude-code-awake/
+### 5. Remote Control
+```
+1. Run `claude rc`, `claude --remote-control`, or `/remote-control` and send a message
+2. Let Claude finish and check that the hold stays
+3. Exit; check that the hold is gone
 ```
 
-### Stale PID files
-The plugin automatically cleans up stale PID files. For manual cleanup:
-```bash
-rm -rf /tmp/claude-code-awake/
+### 6. /always-awake
+```
+1. Run `/always-awake` in a plain session and check that the hold stays while idle
+2. Run `/always-awake` again (or `disable`) and check that it stops
 ```
 
 ## License
