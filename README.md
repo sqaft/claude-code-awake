@@ -32,30 +32,30 @@ Claude Code prevents some sleep by itself: on macOS, an interactive session runs
 | Situation | Claude Code | This plugin |
 |---|---|---|
 | **Interactive session** | | |
-| The main agent is working | Yes | Yes |
-| An agent waits for your answer and nothing else is running | No | No |
-| The main agent has replied, background subagents, teammates or workflows are running | Yes | Yes |
-| An agent waits for your answer while another agent or background task keeps working | No | Yes |
-| Only background shell commands are running | No | Yes |
-| A Monitor or an MCP background task is running | No | Yes |
-| The usage limit paused a turn that continues by itself | No | Yes |
-| Between the runs of `/loop`, a cron or a scheduled wakeup | No | No (use `/always-awake`) |
-| Idle, waiting for your next message | No | No |
-| `/always-awake` is enabled | — | Yes |
+| The main agent is working | ✅ | ✅ |
+| An agent waits for your answer and nothing else is running | ❌ | ❌ |
+| The main agent has replied, background subagents, teammates or workflows are running | ✅ | ✅ |
+| An agent waits for your answer while another agent or background task keeps working | ❌ | ✅ |
+| Only background shell commands are running | ❌ | ✅ |
+| A Monitor or an MCP background task is running | ❌ | ✅ |
+| The usage limit paused a turn that continues by itself | ❌ | ✅ |
+| Between the runs of `/loop`, a cron or a scheduled wakeup | ❌ | ❌ (use `/always-awake`) |
+| Idle, waiting for your next message | ❌ | ❌ |
+| `/always-awake` is enabled | — | ✅ |
 | **Remote Control** | | |
-| A `--remote-control` or `/remote-control` session waits for a message | No | Yes |
-| `/remote-control` is on, no message sent since | No | No, until the next hook |
-| A `claude rc` server runs with no session open | No | Yes, once the server has started a session |
-| A `claude rc` session is working | Yes, at most one hour at a time | Yes |
+| A `--remote-control` or `/remote-control` session waits for a message | ❌ | ✅ |
+| `/remote-control` is on, no message sent since | ❌ | ❌ until the next hook |
+| A `claude rc` server runs with no session open | ❌ | ✅ once the server has started a session |
+| A `claude rc` session is working | ✅ at most one hour at a time | ✅ |
 | **`claude -p` and the Agent SDK** | | |
-| The agent is working | No | Yes |
-| The turn has ended, background tasks are running | No | Yes |
+| The agent is working | ❌ | ✅ |
+| The turn has ended, background tasks are running | ❌ | ✅ |
 | **Power and platform** | | |
-| On battery | Yes | Yes |
-| Lid closed, power adapter connected (macOS) | No | Yes |
-| Lid closed, on battery (macOS) | No | No |
-| Linux | No | Yes |
-| Windows and WSL | No | Yes |
+| On battery | ✅ | ✅ |
+| Lid closed, power adapter connected (macOS) | ❌ | ✅ |
+| Lid closed, on battery (macOS) | ❌ | ❌ |
+| Linux | ❌ | ✅ |
+| Windows and WSL | ❌ | ✅ |
 
 ## Remote Control
 
