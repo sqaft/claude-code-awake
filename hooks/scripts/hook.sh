@@ -42,7 +42,7 @@ case "$EVENT" in
 		;;
 esac
 
-init_state
+init_state || exit 0
 lock_dir "$SD" || exit 0
 
 case "$EVENT" in

@@ -18,6 +18,8 @@ CPID="$1"
 SD="$(state_dir "$CPID")"
 STATUS_FILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions/$CPID.json"
 
+secure_state_root || exit 0
+
 # clear_flags_before <epoch> <file>...: removes flags written before <epoch>.
 clear_flags_before() {
 	local at="$1" flag
@@ -71,6 +73,9 @@ apply_session_status() {
 }
 
 while sleep 15; do
+	# A state root that cannot be trusted is left alone, cleanup included.
+	secure_state_root || exit 0
+
 	if ! native_alive "$CPID"; then
 		end_session_state keep-watcher
 		exit 0

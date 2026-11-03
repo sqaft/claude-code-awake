@@ -23,7 +23,8 @@ case "$OSTYPE" in
 	*) PLATFORM=unknown ;;
 esac
 
-WIN_SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")/windows"
+PLATFORM_SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+WIN_SCRIPT_DIR="$PLATFORM_SCRIPT_DIR/windows"
 
 # Runs a Windows program without MSYS rewriting its /-style arguments.
 win_run() {
@@ -180,6 +181,21 @@ inhibitor_alive() {
 	esac
 }
 
+# own_run_file <pid_file> <run file>: whether <run file> is a run file that
+# new_run_file made for <pid_file>: "<pid_file>.<suffix>.run" in the same
+# directory. A pid file is not trusted to name any other file.
+own_run_file() {
+	local suffix
+
+	case "$2" in
+		"$1".*.run)
+			suffix="${2#"$1".}"
+			[[ $suffix != */* ]]
+			;;
+		*) return 1 ;;
+	esac
+}
+
 # stop_inhibitor <pid_file>: stops the inhibitor and removes <pid_file>.
 # Returns success only if an inhibitor was running.
 stop_inhibitor() {
@@ -193,11 +209,11 @@ stop_inhibitor() {
 			[ "$running" -eq 0 ] && kill "$pid" 2>/dev/null
 			;;
 		linux)
-			rm -f "$run"
+			own_run_file "$1" "$run" && rm -f "$run"
 			[ "$running" -eq 0 ] && [ "$(proc_name "$pid")" = systemd-inhibit ] && kill "$pid" 2>/dev/null
 			;;
 		*)
-			rm -f "$run"
+			own_run_file "$1" "$run" && rm -f "$run"
 			;;
 	esac
 
@@ -205,13 +221,18 @@ stop_inhibitor() {
 	return $running
 }
 
-# Shows a desktop notification, but only in local development (when the
-# plugin is not running from an installed ~/.claude/... location). This is
-# intentional: end users installing via the marketplace should not see
-# these notifications, only the plugin author while testing.
+# Shows a desktop notification, but only in local development: when these
+# scripts do not live in Claude Code's plugin cache
+# (<config dir>/plugins/cache/...) or a marketplace clone
+# (<config dir>/plugins/marketplaces/...). This is intentional: end users
+# installing via the marketplace should not see these notifications, only the
+# plugin author while testing a checkout (for example with --plugin-dir). The
+# decision is based on where this script is, not on environment variables,
+# since CLAUDE_PLUGIN_ROOT is not set for slash commands and the config
+# directory can be anywhere (CLAUDE_CONFIG_DIR).
 notify() {
-	case "$CLAUDE_PLUGIN_ROOT" in
-		*/.claude/* | *\\.claude\\*) return 0 ;;
+	case "$PLATFORM_SCRIPT_DIR" in
+		*/plugins/cache/* | *\\plugins\\cache\\* | */plugins/marketplaces/* | *\\plugins\\marketplaces\\*) return 0 ;;
 	esac
 
 	case "$PLATFORM" in

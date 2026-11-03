@@ -11,21 +11,26 @@ CPID="$(claude_pid)"
 SD="$(state_dir "$CPID")"
 
 case "$ACTION" in
-	enable | disable) ;;
-	toggle)
-		if [ -e "$SD/always" ]; then
-			ACTION=disable
-		else
-			ACTION=enable
-		fi
-		;;
+	enable | disable | toggle) ;;
 	*)
 		echo "Usage: /always-awake [enable|disable]  (no argument toggles)"
 		exit 1
 		;;
 esac
 
-init_state
+if ! init_state; then
+	echo "always-awake: $STATE_ROOT is not a private directory owned by you, so the plugin does not use it. Remove it and try again."
+	exit 1
+fi
+
+if [ "$ACTION" = toggle ]; then
+	if [ -e "$SD/always" ]; then
+		ACTION=disable
+	else
+		ACTION=enable
+	fi
+fi
+
 if ! lock_dir "$SD"; then
 	echo "always-awake: the plugin state is locked, try again."
 	exit 1

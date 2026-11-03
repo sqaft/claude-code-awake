@@ -1,6 +1,6 @@
 {
 	"name": "claude-code-awake",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "Keeps your computer awake while Claude Code agents are working, and for as long as Remote Control is on. macOS, Linux, Windows and WSL.",
 	"author": {
 		"name": "Yakup Yigit"

@@ -143,7 +143,7 @@ Some changes reach no hook: a turn interrupted with Esc or ended by rejecting a 
 
 ### State
 
-State lives in `/tmp/claude-code-awake-<uid>/` (Git Bash's `/tmp` on Windows):
+State lives in `/tmp/claude-code-awake-<uid>/` (Git Bash's `/tmp` on Windows), a private directory (mode `0700`) owned by the current user:
 
 - `<claude pid>/`: the state of one Claude Code process (`turn`, `agents/`, `waiting/`, `tasks`, `rc`, `always`), its hold (`hold.pid`) and its watcher (`watch.pid`)
 - `rc-<server pid>.pid`: the hold of a `claude rc` server
@@ -154,7 +154,9 @@ State lives in `/tmp/claude-code-awake-<uid>/` (Git Bash's `/tmp` on Windows):
 2. **No leftover helpers**: the Linux and Windows holds run only while their run file exists, so stopping one never leaves a helper process behind.
 3. **PID reuse protection**: before treating a PID as one of its holds, the plugin checks the process (and its run file), not just that the PID is alive.
 4. **Stale state cleanup**: the watcher removes a process's state when it exits, and `SessionStart` sweeps state left by processes that are gone.
-5. **Never blocks Claude Code**: hook commands end with `exit 0`, so a failing hook can't block a prompt or deny a permission.
+5. **Private state directory**: `/tmp` is shared, so before anything is written the plugin makes sure `/tmp/claude-code-awake-<uid>/` is a real directory (not a symlink) owned by the current user and sets its mode to `0700`. If it is not, for example because another user created it first, the plugin does nothing: no hold is started, nothing is written, and `/always-awake` says so. Once the directory is removed the plugin works again. (Not checked on Windows, where Git Bash's `/tmp` is already per-user.)
+6. **Own files only**: the plugin only deletes the run file that belongs to a hold's own pid file (`hold.pid.<pid>.<n>.run`), whatever a pid file says.
+7. **Never blocks Claude Code**: hook commands end with `exit 0`, so a failing hook can't block a prompt or deny a permission.
 
 ### Hook Timeouts
 
@@ -242,7 +244,7 @@ rm -rf /tmp/claude-code-awake-$UID/
 
 ## License
 
-MIT
+[MIT](LICENSE)
 
 ## Contributing
 

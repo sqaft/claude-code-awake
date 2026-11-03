@@ -22,6 +22,10 @@
 #   watch.pid      the watcher (see watch.sh)
 # Flag files contain the epoch second they were written.
 #
+# $STATE_ROOT is in the shared /tmp, so nothing is created or written under
+# it before secure_state_root has confirmed that it is a real directory owned
+# by the current user (mode 0700). When that fails the plugin does nothing.
+#
 # Callers set CPID (the Claude Code PID) and SD (its state directory), and
 # PAYLOAD / PAYLOAD_HEAD when handling a hook payload.
 
@@ -61,10 +65,14 @@ payload_agent_id() {
 # payload_tasks: "<id> <type>" for each running or pending entry of the
 # background_tasks field of a Stop or SubagentStop payload.
 payload_tasks() {
-	local rest="${PAYLOAD#*\"background_tasks\":\[}"
+	local list_re='"background_tasks":\[(.*)$'
 	local re='\{"id":"([^"]*)","type":"([^"]*)","status":"(running|pending)"'
+	local rest
 
-	[ "$rest" != "$PAYLOAD" ] || return 1
+	# background_tasks follows the whole last assistant message, so the list is
+	# found with a regex; ${PAYLOAD#*...} is quadratic in the payload size.
+	[[ $PAYLOAD =~ $list_re ]] || return 1
+	rest="${BASH_REMATCH[1]}"
 	rest="${rest%%\"session_crons\":*}"
 
 	while [[ $rest =~ $re ]]; do
@@ -106,7 +114,28 @@ state_dir() {
 	printf '%s/%s' "$STATE_ROOT" "$1"
 }
 
+# secure_state_root: creates $STATE_ROOT as a private directory, or repairs
+# an existing one to mode 0700. Fails when it is a symlink or belongs to
+# another user, since that user could plant files that the plugin would then
+# follow or delete.
+secure_state_root() {
+	if [ "$PLATFORM" = windows ]; then
+		# Git Bash's /tmp is already per-user, and ownership and modes are
+		# emulated there.
+		mkdir -p "$STATE_ROOT" 2>/dev/null
+		[ -d "$STATE_ROOT" ]
+		return
+	fi
+
+	[ -d "$STATE_ROOT" ] || mkdir -m 700 "$STATE_ROOT" 2>/dev/null
+	[ -d "$STATE_ROOT" ] && [ ! -L "$STATE_ROOT" ] && [ -O "$STATE_ROOT" ] || return 1
+	chmod 700 "$STATE_ROOT" 2>/dev/null
+}
+
+# init_state: creates the state directory of this Claude Code process.
+# Fails, creating nothing, when the state root cannot be trusted.
 init_state() {
+	secure_state_root || return 1
 	mkdir -p "$SD/agents" "$SD/waiting" 2>/dev/null
 }
 
@@ -165,9 +194,9 @@ reconcile() {
 	if work_needed; then
 		inhibitor_alive "$SD/hold.pid" && return 0
 		stop_inhibitor "$SD/hold.pid"
-		start_inhibitor "$SD/hold.pid" "$CPID" && notify "Uyku engellendi."
+		start_inhibitor "$SD/hold.pid" "$CPID" && notify "Sleep blocked."
 	elif stop_inhibitor "$SD/hold.pid"; then
-		notify "Uyku engeli kaldırıldı."
+		notify "Sleep block released."
 	fi
 }
 
@@ -275,7 +304,7 @@ ensure_rc_server_hold() {
 	if ! inhibitor_alive "$pid_file"; then
 		stop_inhibitor "$pid_file"
 		start_inhibitor "$pid_file" "$1" &&
-			notify "Remote Control sunucusu için uyku engellendi."
+			notify "Sleep blocked for the Remote Control server."
 	fi
 
 	unlock_dir "$STATE_ROOT"
@@ -287,7 +316,7 @@ ensure_rc_server_hold() {
 end_session_state() {
 	local pid
 
-	stop_inhibitor "$SD/hold.pid" && notify "Uyku engeli kaldırıldı."
+	stop_inhibitor "$SD/hold.pid" && notify "Sleep block released."
 
 	if [ "$1" != keep-watcher ] && watcher_alive; then
 		read -r pid <"$SD/watch.pid"

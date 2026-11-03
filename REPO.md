@@ -28,5 +28,5 @@ The plugin is versioned in `.claude-plugin/plugin.json`. To release, bump `versi
 
 ## Notes
 
-- All code, comments, docs and messages are in English, except the development-only notifications.
+- All code, comments, docs and messages are in English.
 - The plugin relies on undocumented Claude Code behavior (`background_tasks` in `Stop`/`SubagentStop` payloads, `~/.claude/sessions/<pid>.json`). When Claude Code changes, check these first; see `LEARNINGS.md`.
